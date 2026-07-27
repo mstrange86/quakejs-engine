@@ -64,7 +64,8 @@ EMSCRIPTEN_KEEPALIVE void qjs_cmd(const char *text)
    qjs_getstate -- one atomic snapshot, as JSON
    ====================================================================== */
 
-static char qjs_statebuf[2048];
+/* 16 slots * ~140 bytes of player JSON, plus the fixed header. */
+static char qjs_statebuf[8192];
 
 /* Append `src` to dest as a JSON string body, escaping what RFC 8259 requires.
    levelname comes from map data we do not control, so it gets escaped rather
@@ -152,12 +153,23 @@ EMSCRIPTEN_KEEPALIVE const char *qjs_getstate(void)
 #endif
 
 	Q_snprintfz(qjs_statebuf, sizeof(qjs_statebuf),
-		"{\"state\":%i,\"mapname\":\"%s\",\"time\":%.3f,\"playernum\":%i,"
+		"{\"state\":%i,\"mapname\":\"%s\",\"time\":%.3f,\"mtime\":%.3f,\"playernum\":%i,"
 		"\"clients\":%i,\"maxclients\":%i,\"svactive\":%i,\"paused\":%i,"
 		"\"levelname\":\"",
 		(int)cls.state,
 		QJS_MapBaseName(),
 		cl.time,
+		/* The server's own clock as of the LAST RECEIVED PACKET, so it changes
+		   only when a server update actually arrives. cl.time above is
+		   interpolated forward every client frame and keeps advancing smoothly
+		   through a total network stall -- using it to measure network health
+		   silently reports perfect health on a dead link.
+
+		   This reads cl.gametime, NOT cl.mtime. Despite its comment ("server
+		   time as on the server when we last received a packet") cl.mtime is a
+		   QuakeWorld-era field that stays 0 on this path; cl.gametime is what
+		   cl_parse.c/cl_ents.c actually assign per packet. */
+		cl.gametime,
 		/* Per-SEAT, not per-client: FTE supports splitscreen, so playernum lives
 		   on playerview[] rather than on client_state_t. Seat 0 is the only one
 		   quakejs uses -- the browser has one keyboard and one canvas. */
@@ -166,7 +178,67 @@ EMSCRIPTEN_KEEPALIVE const char *qjs_getstate(void)
 		(int)cl.paused);
 
 	QJS_AppendEscaped(qjs_statebuf, sizeof(qjs_statebuf), cl.levelname);
-	Q_strncatz(qjs_statebuf, "\"}", sizeof(qjs_statebuf));
+	Q_strncatz(qjs_statebuf, "\",\"players\":[", sizeof(qjs_statebuf));
+
+#ifndef CLIENTONLY
+	/*
+	 * Per-player detail, needed to make bot assertions MECHANICAL rather than
+	 * visual. "Three bots appeared" is checkable from a count, but "the bots are
+	 * actually playing" is not -- a bot that spawned and then stood still at its
+	 * spawn point (the exact failure when a map's waypoint graph never loaded)
+	 * satisfies a count check perfectly. Origin and frags let the smoke test
+	 * assert that positions CHANGE and frags INCREMENT.
+	 *
+	 * WHY THIS ITERATES EDICTS AND NOT svs.clients:
+	 * FrikBot X bots are NOT network clients. BotConnect() calls
+	 * GetClientEntity(n) and drives a reserved player-slot edict directly,
+	 * calling ClientConnect()/PutClientInServer() from QuakeC -- the engine never
+	 * sees a connection, so svs.clients[n].state stays cs_free. This is the
+	 * classic NetQuake bot technique and it is why `clients` below counts 1 in a
+	 * game with three bots happily fragging each other.
+	 *
+	 * Player slots are edicts 1..maxclients, permanently reserved whether or not
+	 * anyone occupies them, so enumerating those edicts sees real players and
+	 * QuakeC bots alike. `isbot` is reported rather than inferred: it is exactly
+	 * the distinction that a count of network clients cannot express.
+	 */
+	if (sv.state >= ss_active && svprogfuncs)
+	{
+		int i, first = 1;
+		for (i = 0; i < sv.allocated_client_slots; i++)
+		{
+			edict_t *ent = EDICT_NUM_PB(svprogfuncs, i + 1);
+			const char *name;
+			char entry[320];
+
+			if (!ent || ent->ereftype != ER_ENTITY)
+				continue;
+
+			name = PR_GetString(svprogfuncs, ent->v->netname);
+			if (!name || !*name)
+				continue;	/* empty slot */
+
+			Q_snprintfz(entry, sizeof(entry),
+				"%s{\"slot\":%i,\"frags\":%i,\"health\":%i,\"isbot\":%s,"
+				"\"origin\":[%.1f,%.1f,%.1f],\"name\":\"",
+				first ? "" : ",", i,
+				(int)ent->v->frags,
+				(int)ent->v->health,
+				/* real JSON booleans, so the TypeScript type is honest rather
+				   than describing 0/1 as boolean */
+				svs.clients[i].state == cs_spawned ? "false" : "true",
+				ent->v->origin[0], ent->v->origin[1], ent->v->origin[2]);
+			Q_strncatz(qjs_statebuf, entry, sizeof(qjs_statebuf));
+			/* Names are gamecode-supplied and use Quake's non-UTF-8 charset, so
+			   they go through the escaper like levelname does. */
+			QJS_AppendEscaped(qjs_statebuf, sizeof(qjs_statebuf), name);
+			Q_strncatz(qjs_statebuf, "\"}", sizeof(qjs_statebuf));
+			first = 0;
+		}
+	}
+#endif
+
+	Q_strncatz(qjs_statebuf, "]}", sizeof(qjs_statebuf));
 
 	return qjs_statebuf;
 }
