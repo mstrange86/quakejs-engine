@@ -132,10 +132,18 @@ void QJS_DumpFrame(void)
 	}
 
 	Q_snprintfz(record, sizeof(record),
-		"{\"f\":%i,\"t\":%.4f,\"org\":[%.3f,%.3f,%.3f],\"ang\":[%.3f,%.3f,%.3f],"
+		"{\"f\":%i,\"t\":%.4f,\"ft\":%.6f,\"org\":[%.3f,%.3f,%.3f],\"ang\":[%.3f,%.3f,%.3f],"
 		"\"ents\":%i,\"eh\":\"%08x\",\"st\":[%i,%i,%i,%i,%i,%i,%i]}",
 		host_framecount,
 		cl.time,
+		/* WALL-CLOCK frame duration, which is NOT cl.time and is the reason this
+		   field exists. Quake's step-view smoothing integrates against
+		   host_frametime (cl_pred.c: oldz += host_frametime * crouchspeed), so a
+		   build running a timedemo unthrottled at 1200fps smooths ~20x slower
+		   per frame than one paced to 60fps by requestAnimationFrame -- while
+		   cl.time, being demo time, matches exactly. Diffing cl.time alone makes
+		   that look like a behavioural divergence. It is not. */
+		host_frametime,
 		r_refdef.vieworg[0], r_refdef.vieworg[1], r_refdef.vieworg[2],
 		pv->viewangles[0], pv->viewangles[1], pv->viewangles[2],
 		nents, h,
