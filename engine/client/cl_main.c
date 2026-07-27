@@ -6119,6 +6119,7 @@ void CL_Init (void)
 #ifdef QUAKEHUD
 	Stats_Init();
 #endif
+	QJS_Dump_Init();	//[quakejs P-6] fidelity-gate state capture cvars
 	CL_ClearState(false);	//make sure the cl.* fields are set properly if there's no ssqc or whatever.
 	R_BumpLightstyles(1);
 }
@@ -7464,6 +7465,10 @@ double Host_Frame (double time)
 #ifdef QUAKESTATS
 	TP_UpdateAutoStatus();
 #endif
+
+	//[quakejs P-6] capture BEFORE host_framecount++ so the record's frame number
+	//is the frame whose state it describes. No-ops unless qjs_dumpstate is set.
+	QJS_DumpFrame();
 
 	host_framecount++;
 	cl.lasttime = cl.time;

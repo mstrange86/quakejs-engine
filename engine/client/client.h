@@ -1846,3 +1846,9 @@ qboolean Media_RegisterDecoder(struct plugin_s *plug, media_decoder_funcs_t *fun
 qboolean Media_UnregisterDecoder(struct plugin_s *plug, media_decoder_funcs_t *funcs);
 qboolean Media_RegisterEncoder(struct plugin_s *plug, media_encoder_funcs_t *funcs);
 qboolean Media_UnregisterEncoder(struct plugin_s *plug, media_encoder_funcs_t *funcs);
+
+//[quakejs P-6] fidelity-gate state capture (common/qjs_dump.c).
+//Declared here rather than in a new header so the patch surface stays small:
+//every line added to this fork is a line to re-merge on each upstream rebase.
+void QJS_Dump_Init(void);
+void QJS_DumpFrame(void);

@@ -931,6 +931,7 @@ WINDOWS_OBJS = \
 	$(LTO_END) resources.o $(LTO_START)
 
 COMMON_OBJS = \
+	qjs_dump.o	\
 	gl_alias.o		\
 	gl_hlmdl.o	\
 	gl_heightmap.o		\
