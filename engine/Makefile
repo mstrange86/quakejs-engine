@@ -1875,7 +1875,7 @@ ifeq ($(FTE_TARGET),droid)
 endif
 
 ifeq ($(FTE_TARGET),web)
-	COMMON_OBJS+=sys_web.o fs_web.o
+	COMMON_OBJS+=sys_web.o fs_web.o qjs_bridge.o	#[quakejs P-2] the JS<->engine boundary
 	WEB_PREJS ?= --pre-js web/prejs.js
 #	WEB_MEMORY?=402653184	#384mb
 #	ASMJS_MEMORY?=16777216	#16mb
@@ -1896,6 +1896,34 @@ ifeq ($(FTE_TARGET),web)
 	EMCC_LDFLAGS+= -s MAX_WEBGL_VERSION=2			#make use of what we can.
 	EMCC_LDFLAGS+= -s TOTAL_STACK=5MB			#big!
    	EMCC_LDFLAGS+=-s ERROR_ON_UNDEFINED_SYMBOLS=1	#fairly obvious. no runtime errors please.
+
+#[quakejs P-2] --------------------------------------------------------------
+#	ccall/cwrap/UTF8ToString are what web/src/engine/fte.ts uses to reach the
+#	qjs_* entry points in web/qjs_bridge.c. EMSCRIPTEN_KEEPALIVE keeps the C
+#	functions alive through LTO, but the JS-side *callers* are a separate list
+#	and are dead-stripped by default -- omitting this yields a build where the
+#	exports exist in the wasm and are unreachable from JS.
+	EMCC_LDFLAGS+= -s EXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString
+#	MAXIMUM_MEMORY bounds ALLOW_MEMORY_GROWTH. Without it the cap defaults to
+#	2GB, which no iPhone can honour -- the tab is jetsammed long before that, so
+#	the real effect is that a runaway allocation kills the page instead of
+#	failing an allocation the engine could have reported. Desktop value here;
+#	the mobile profile overrides it (see ui-mobile/device-profile.ts, P7).
+	EMCC_LDFLAGS+= -s MAXIMUM_MEMORY=536870912	#512mb
+#	DO NOT set MIN_SAFARI_VERSION here. It is tempting -- the target envelope is
+#	"every iPhone from 2020 onward", which implies a Safari 15.2 floor -- but:
+#	  (a) it is unnecessary: emsdk 4.0.12 already DEFAULTS to 150000
+#	      (Safari 15.0), which is strictly MORE permissive than our floor; and
+#	  (b) setting 150200 produces a wasm that FAILS WebAssembly.validate().
+#	      Raising the floor lets emcc emit features outside the --enable-* set
+#	      that emcc then invokes wasm-opt with, and wasm-opt dies misparsing them
+#	      as "[parse exception: invalid UTF-8 string]" -- an error that points
+#	      nowhere near the cause. Verified by bisection: with this flag the
+#	      module is invalid, without it the same tree validates.
+#	Note wasm-opt rewrites the wasm IN PLACE, so a failure leaves a corrupt
+#	artifact that make then treats as up to date. build-web.sh deletes the
+#	outputs before every link because of this.
+#---------------------------------------------------------------------------
 	RELEASE_CFLAGS=-DOMIT_QCC -DGL_STATIC $(EMCC_CFLAGS)
 	DEBUG_CFLAGS=-gsource-map -DOMIT_QCC -DGL_STATIC $(EMCC_CFLAGS)
 	RELEASE_LDFLAGS=-O3	-s TOTAL_MEMORY=$(ASMJS_MEMORY) $(EMCC_LDFLAGS)
