@@ -8492,6 +8492,27 @@ void SV_ExecuteClientMessage (client_t *cl)
 			return;
 		}
 
+		//[quakejs] USE-AFTER-FREE FIX. `frame` was computed ONCE before this
+		//loop, but handlers dispatched inside it can reallocate the buffer it
+		//points into: clc_stringcmd -> SV_Pext_f -> SV_ClientProtocolExtensionsChanged
+		//does Z_Free(client->frameunion.frames) followed by a fresh Z_Malloc
+		//(sv_main.c). Every browser client sends `pext` during connect, and a
+		//clc_move arriving in that same packet then dereferenced a dangling
+		//pointer -- SIGSEGV at `frame->laggedtime`.
+		//
+		//It survived on macOS because the freed block usually stayed mapped and
+		//readable; on Linux/glibc the new allocation is a different size and the
+		//old span can be unmapped, so it faulted every time. Re-deriving the
+		//pointer each iteration costs one add and is correct whether or not the
+		//buffer moved.
+		if (!cl->frameunion.frames)
+		{	//a handler dropped the client and released its frames.
+			host_client = NULL;
+			sv_player = NULL;
+			return;
+		}
+		frame = &cl->frameunion.frames[cl->netchan.incoming_acknowledged & UPDATE_MASK];
+
 		c = MSG_ReadByte ();
 		if (c == -1)
 			break;
