@@ -138,7 +138,7 @@ static const char *QJS_MapBaseName(void)
    string out (JSON.parse does) before the next call -- do not retain it. */
 EMSCRIPTEN_KEEPALIVE const char *qjs_getstate(void)
 {
-	int clients = 0, maxclients = 0, svactive = 0;
+	int clients = 0, maxclients = 0, svactive = 0, hosting = 0;
 
 #ifndef CLIENTONLY
 	if (sv.state >= ss_active)
@@ -205,6 +205,7 @@ EMSCRIPTEN_KEEPALIVE const char *qjs_getstate(void)
 	if (sv.state >= ss_active && svprogfuncs)
 	{
 		int i, first = 1;
+		hosting = 1;
 		for (i = 0; i < sv.allocated_client_slots; i++)
 		{
 			edict_t *ent = EDICT_NUM_PB(svprogfuncs, i + 1);
@@ -238,7 +239,49 @@ EMSCRIPTEN_KEEPALIVE const char *qjs_getstate(void)
 	}
 #endif
 
-	Q_strncatz(qjs_statebuf, "]}", sizeof(qjs_statebuf));
+	/*
+	 * REMOTE SERVER: fall back to the CLIENT's scoreboard.
+	 *
+	 * The block above enumerates server-side edicts, which only exist when we
+	 * are hosting. Connected to a dedicated server there is no local server, so
+	 * it produced an empty list -- players[] read as [] and clients as 0 in a
+	 * live multiplayer game, which is correct-but-useless and left multiplayer
+	 * with no scoreboard.
+	 *
+	 * cl.players[] is what the client actually knows about other players: name,
+	 * frags, ping. It does NOT carry origin or health for anyone but ourselves
+	 * -- a Quake client is never told other players' health, and their positions
+	 * arrive as entity updates rather than scoreboard data. Those fields are
+	 * emitted as nulls rather than zeros so a consumer cannot mistake "unknown"
+	 * for "dead at the origin".
+	 */
+	if (!hosting && cls.state >= ca_connected)
+	{
+		int i, first = 1;
+		for (i = 0; i < MAX_CLIENTS; i++)
+		{
+			char entry[320];
+			if (!cl.players[i].name[0])
+				continue;	/* empty slot -- same test sbar.c uses */
+
+			Q_snprintfz(entry, sizeof(entry),
+				"%s{\"slot\":%i,\"frags\":%i,\"ping\":%i,\"health\":null,"
+				"\"isbot\":null,\"origin\":null,\"spectator\":%s,\"name\":\"",
+				first ? "" : ",", i,
+				cl.players[i].frags,
+				cl.players[i].ping,
+				cl.players[i].spectator ? "true" : "false");
+			Q_strncatz(qjs_statebuf, entry, sizeof(qjs_statebuf));
+			QJS_AppendEscaped(qjs_statebuf, sizeof(qjs_statebuf), cl.players[i].name);
+			Q_strncatz(qjs_statebuf, "\"}", sizeof(qjs_statebuf));
+			first = 0;
+		}
+	}
+
+	Q_strncatz(qjs_statebuf, "],\"playersource\":\"", sizeof(qjs_statebuf));
+	/* Which list the consumer got, so it never has to guess why origin is null. */
+	Q_strncatz(qjs_statebuf, hosting ? "server" : "client", sizeof(qjs_statebuf));
+	Q_strncatz(qjs_statebuf, "\"}", sizeof(qjs_statebuf));
 
 	return qjs_statebuf;
 }
