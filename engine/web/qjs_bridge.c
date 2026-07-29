@@ -155,6 +155,7 @@ EMSCRIPTEN_KEEPALIVE const char *qjs_getstate(void)
 	Q_snprintfz(qjs_statebuf, sizeof(qjs_statebuf),
 		"{\"state\":%i,\"mapname\":\"%s\",\"time\":%.3f,\"mtime\":%.3f,\"playernum\":%i,"
 		"\"clients\":%i,\"maxclients\":%i,\"svactive\":%i,\"paused\":%i,"
+		"\"viewcx\":%.5f,\"viewcy\":%.5f,"
 		"\"levelname\":\"",
 		(int)cls.state,
 		QJS_MapBaseName(),
@@ -175,7 +176,21 @@ EMSCRIPTEN_KEEPALIVE const char *qjs_getstate(void)
 		   quakejs uses -- the browser has one keyboard and one canvas. */
 		cl.playerview[0].playernum,
 		clients, maxclients, svactive,
-		(int)cl.paused);
+		(int)cl.paused,
+		/*
+		 * Centre of the 3D VIEW as a fraction of the screen, not of the canvas.
+		 *
+		 * Quake's crosshair is centred in r_refdef.vrect, which excludes the
+		 * status bar — so it sits ABOVE the canvas centre whenever the sbar is
+		 * drawn. Anything the client wants to align to the crosshair (the
+		 * movement direction cues) has to know that, and guessing the sbar
+		 * height would break the moment viewsize or the HUD scale changes.
+		 *
+		 * Emitted as fractions so the client can multiply by the canvas's CSS
+		 * size without also needing the engine's virtual resolution.
+		 */
+		(vid.width  > 0) ? (r_refdef.vrect.x + r_refdef.vrect.width  * 0.5f) / vid.width  : 0.5f,
+		(vid.height > 0) ? (r_refdef.vrect.y + r_refdef.vrect.height * 0.5f) / vid.height : 0.5f);
 
 	QJS_AppendEscaped(qjs_statebuf, sizeof(qjs_statebuf), cl.levelname);
 	Q_strncatz(qjs_statebuf, "\",\"players\":[", sizeof(qjs_statebuf));
